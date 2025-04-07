@@ -15,14 +15,15 @@ IMG_SIZE = 224
 EPOCHS = 20
 NUM_CLASSES = 20
 
-# Ожидаемые категории в правильном порядке
-EXPECTED_CATEGORIES = ['sports', 'inactivity quiet/light', 'miscellaneous', 'occupation', 'water activities',
-                       'home activities', 'lawn and garden', 'religious activities', 'winter activities'
-    , 'conditioning exercise', 'bicycling', 'fishing and hunting', 'dancing', 'walking', 'running', 'self care'
-    , 'home repair', 'volunteer activities', 'music playing', 'transportation'
-                       ]
+# Ожидаемые категории
+EXPECTED_CATEGORIES = [
+    'sports', 'inactivity quiet/light', 'miscellaneous', 'occupation', 'water activities',
+    'home activities', 'lawn and garden', 'religious activities', 'winter activities',
+    'conditioning exercise', 'bicycling', 'fishing and hunting', 'dancing', 'walking',
+    'running', 'self care', 'home repair', 'volunteer activities', 'music playing', 'transportation'
+]
 
-# Проверка наличия файлов
+# Проверка файлов
 required_files = [
     os.path.join(DATA_DIR, 'train_answers.csv'),
     os.path.join(DATA_DIR, 'activity_categories.csv'),
@@ -32,7 +33,7 @@ required_files = [
 
 for path in required_files:
     if not os.path.exists(path):
-        raise FileNotFoundError(f"Не найден файл: {path}")
+        raise FileNotFoundError(f"Отсутствует файл: {path}")
 
 # Трансформации данных
 train_transform = transforms.Compose([
@@ -40,14 +41,14 @@ train_transform = transforms.Compose([
     transforms.RandomHorizontalFlip(),
     transforms.ColorJitter(0.2, 0.2, 0.2),
     transforms.ToTensor(),
-    transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+    transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
 ])
 
 test_transform = transforms.Compose([
     transforms.Resize(256),
     transforms.CenterCrop(IMG_SIZE),
     transforms.ToTensor(),
-    transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
+    transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
 ])
 
 
@@ -61,18 +62,14 @@ class ActivityDataset(Dataset):
         return len(self.df)
 
     def __getitem__(self, idx):
-        # Исправляем получение имени файла и добавляем расширение
+        # Получаем имя файла из столбца img_id
         img_id = self.df.iloc[idx]['img_id']
-        img_name = f"{img_id}.jpg"  # или .png в зависимости от ваших данных
+        img_name = f"{img_id}.jpg"  # Добавляем расширение
         label = self.df.iloc[idx]['label']
         img_path = os.path.join(self.img_dir, img_name)
 
         if not os.path.exists(img_path):
-            # Попробуем другой формат, если не найден
-            img_name_alt = f"{img_id:05d}.jpg"  # формат с ведущими нулями
-            img_path = os.path.join(self.img_dir, img_name_alt)
-            if not os.path.exists(img_path):
-                raise FileNotFoundError(f"Изображение не найдено: {img_id}")
+            raise FileNotFoundError(f"Изображение не найдено: {img_path}")
 
         image = Image.open(img_path).convert('RGB')
         if self.transform:
@@ -119,41 +116,43 @@ def main():
     categories_df = pd.read_csv(os.path.join(DATA_DIR, 'activity_categories.csv'))
 
     # Проверка структуры данных
-    if 'img_id' not in train_df.columns or 'target_feature' not in train_df.columns:
-        raise KeyError("Некорректные столбцы в train_answers.csv")
+    print("Столбцы train_answers.csv:", train_df.columns.tolist())
+    print("Первые 5 строк train_answers.csv:\n", train_df.head())
 
     # Создание маппинга категорий
     category_map = {}
     for _, row in categories_df.iterrows():
         try:
             category_map[row['id']] = EXPECTED_CATEGORIES.index(row['category'])
-        except ValueError:
-            raise ValueError(f"Неизвестная категория: {row['category']}")
-        except KeyError:
-            raise KeyError(f"Некорректные столбцы в activity_categories.csv")
+        except ValueError as e:
+            raise ValueError(f"Неизвестная категория: {row['category']}") from e
 
     # Преобразование меток
     train_df['label'] = train_df['target_feature'].map(category_map)
 
     # Проверка меток
-    label_stats = train_df['label'].describe()
-    if label_stats['min'] < 0 or label_stats['max'] >= NUM_CLASSES:
+    print("\nСтатистика меток:")
+    print("Минимум:", train_df['label'].min())
+    print("Максимум:", train_df['label'].max())
+    print("Уникальные значения:", sorted(train_df['label'].unique()))
+
+    if train_df['label'].isna().any():
+        raise ValueError("Обнаружены NaN в метках")
+    if (train_df['label'].min() < 0) or (train_df['label'].max() >= NUM_CLASSES):
         raise ValueError(f"Метки должны быть в диапазоне 0-{NUM_CLASSES - 1}")
 
-    # Создание датасета
+    # Датасеты и загрузчики
     full_dataset = ActivityDataset(
         img_dir=os.path.join(DATA_DIR, 'img_train'),
         df=train_df,
         transform=train_transform
     )
 
-    # Разделение данных
     train_size = int(0.8 * len(full_dataset))
     train_set, val_set = random_split(full_dataset, [train_size, len(full_dataset) - train_size])
 
-    # DataLoader'ы
-    train_loader = DataLoader(train_set, batch_size=BATCH_SIZE, shuffle=True, num_workers=0)
-    val_loader = DataLoader(val_set, batch_size=BATCH_SIZE, shuffle=False, num_workers=0)
+    train_loader = DataLoader(train_set, batch_size=BATCH_SIZE, shuffle=True)
+    val_loader = DataLoader(val_set, batch_size=BATCH_SIZE, shuffle=False)
 
     # Инициализация модели
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -170,7 +169,6 @@ def main():
 
         for images, labels in progress_bar:
             images, labels = images.to(device), labels.to(device)
-
             optimizer.zero_grad()
             outputs = model(images)
             loss = criterion(outputs, labels)
@@ -200,14 +198,15 @@ def main():
             best_acc = val_acc
             torch.save(model.state_dict(), 'best_model.pth')
 
-    # Предсказание на тесте
-    test_images = sorted(
-        [f for f in os.listdir(os.path.join(DATA_DIR, 'img_test'))
-         if f.endswith(('.jpg', '.png', '.jpeg'))],  # добавляем все возможные расширения
+    # Предсказание
+    test_files = sorted(
+        [f for f in os.listdir(os.path.join(DATA_DIR, 'img_test')) if f.endswith(('.jpg', '.png'))],
         key=lambda x: int(x.split('.')[0]))
 
-    test_df = pd.DataFrame({'image': test_images})
-    test_df['Id'] = test_df['image'].str.split('.').str[0].astype(int)
+    test_df = pd.DataFrame({
+        'img_id': [int(f.split('.')[0]) for f in test_files],
+        'image': test_files
+    })
     test_df['label'] = 0  # Фиктивные метки
 
     test_dataset = ActivityDataset(
@@ -217,7 +216,8 @@ def main():
     )
     test_loader = DataLoader(test_dataset, batch_size=BATCH_SIZE, shuffle=False)
 
-    model.load_state_dict(torch.load('best_model.pth'))
+    # Безопасная загрузка модели
+    model.load_state_dict(torch.load('best_model.pth', map_location=device, weights_only=True))
     model.eval()
 
     predictions = []
@@ -227,14 +227,14 @@ def main():
             outputs = model(images)
             predictions.extend(torch.argmax(outputs, dim=1).cpu().numpy())
 
-            # Сохранение результатов
-        submission = pd.DataFrame({
-            'Id': test_df['Id'],
-            'target_feature': predictions
-        }).sort_values('Id')
+    # Сохранение результатов
+    submission = pd.DataFrame({
+        'id': test_df['img_id'],
+        'target_feature': predictions
+    }).sort_values('id')
 
-        submission.to_csv('submission.csv', index=False)
-        print("Результаты сохранены в submission.csv")
+    submission.to_csv('submission.csv', index=False)
+    print("Результаты сохранены в submission.csv")
 
 
 if __name__ == '__main__':
