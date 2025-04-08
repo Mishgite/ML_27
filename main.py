@@ -246,9 +246,9 @@ def main():
             predictions.extend(outputs.argmax(1).cpu().numpy())
 
     submission = pd.DataFrame({
-        'Id': test_df['img_id'],
+        'id': test_df['img_id'],
         'target_feature': predictions
-    }).sort_values('Id')
+    }).sort_values('id')
 
     submission.to_csv('submission.csv', index=False)
     print("Результаты сохранены в submission.csv")
